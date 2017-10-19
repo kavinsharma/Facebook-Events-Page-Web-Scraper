@@ -1,0 +1,345 @@
+import numpy as np
+import requests
+from bs4 import BeautifulSoup
+from collections import OrderedDict
+from django.http import HttpResponse
+from django.shortcuts import render
+import pandas as pd
+from df2gspread import df2gspread as d2g
+from df2gspread import gspread2df as g2d
+
+
+# ==============return event heading=================#
+
+def heading(soup):
+    heading = soup.find(class_="_5gmx")
+    print(("Event data fectched: " + heading.string))
+    head1 = str(heading.string)
+    return str(head1)
+
+
+# ==========return event start date =================#
+
+def date(soup):
+    date = soup.find('span', class_="_5a4z")
+    date1 = date.string
+    return str(date1)
+
+
+# ==========return event image url =================#
+
+def ur_l(soup):
+    tags = soup.findAll('img', class_="scaledImageFitWidth img")
+    Url_1 = "\n".join(set(tag['src'] for tag in tags))
+    tags = soup.findAll('img', class_="scaledImageFitHeight img")
+    Url_2 = "\n".join(set(tag['src'] for tag in tags))
+    if Url_1:
+        return str(Url_1)
+    else:
+        return str(Url_2)
+
+
+# ======================return event details=====================#
+
+def Event_Details(data):
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        Event_Details = more_soup.findAll('div', {'class': '_2qgs'})
+        if Event_Details:
+            Event = Event_Details[0].text
+    return Event
+
+
+# =======================return event location===============#
+
+def Location(data):
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        Location = more_soup.findAll('a', {'class': '_5xhk'})
+        if Location:
+            Locate = str(Location[0].text)
+    return Locate
+
+
+# ============= return event More Info || Timming || Ticket Link ============= #
+
+def Tick_Time_Info(data):
+    mainData = []
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        wanted_text = more_soup.findAll('div', {'class': '_5xhp fsm fwn fcg'})
+        if wanted_text:
+
+            mainData.append(str(wanted_text[1].text))
+            mainData.append(wanted_text[0].text)
+            try:
+                mainData.append(wanted_text[2].text)
+
+            except IndexError:
+                mainData.append('nan')
+    return mainData
+
+
+# ======================return start date endate======================#
+def Date(data):
+    dat = []
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        Timming = more_soup.findAll("span", {'itemprop': "startDate"})
+        if Timming:
+            try:
+                dat.append(str(Timming[1].text))
+            except IndexError:
+                dat.append(str(Timming[0].text))
+            try:
+                dat.append(str(Timming[0].text))
+            except IndexError:
+                dat.append(np.nan)
+    return dat
+
+
+# ==========================return year============================#
+def year(data):
+    y = []
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        Timming = more_soup.findAll("div", {'class': "_publicProdFeedInfo__timeRowTitle _5xhk"})
+        if Timming:
+            y.append(Timming[0])
+    return y
+
+
+# =====================return start and end time===================================#
+def Timming(data):
+    da = []
+    for item in data:
+        commentedHTML = item.find('code').contents[0]
+        more_soup = BeautifulSoup(commentedHTML, 'lxml')
+        Timming = more_soup.findAll("span")
+        if Timming:
+            try:
+                da.append((Timming[2].text))
+            except IndexError:
+                da.append("NAN")
+            try:
+                da.append((Timming[3].text))
+            except IndexError:
+                da.append("NAN")
+    return da
+
+
+# =================================return time in seconds==========================#
+def startseconds(stdatetime):
+    import time
+    dt_obj = time.strptime(str(stdatetime), "%d %B %Y %H:%M")
+    print(dt_obj)
+    timestamp = time.mktime(dt_obj)
+    print(repr(timestamp))
+    return timestamp
+
+
+def endseconds(endatetime):
+    import time
+    try:
+        dt_obj = time.strptime(str(endatetime), "%d %B %Y %H:%M")
+        timestamp = time.mktime(dt_obj)
+    except ValueError:
+        timestamp = np.nan
+    print(repr(timestamp))
+    return timestamp
+
+
+# ================Getting Latitude and longitude================================#
+
+
+def Lat_long(Locate, moreinfo):
+    try:
+        address = str(Locate + moreinfo)
+        response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address= ' + address)
+        resp_json_payload = response.json()
+        Latlong = list((resp_json_payload['results'][0]['geometry']['location']).values())
+    except IndexError:
+        pass
+    try:
+        address = str(moreinfo)
+        response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address= ' + address)
+        resp_json_payload = response.json()
+        Latlong = list((resp_json_payload['results'][0]['geometry']['location']).values())
+    except IndexError:
+        try:
+            address = str(Locate)
+            response = requests.get('https://maps.googleapis.com/maps/api/geocode/json?address= ' + address)
+            resp_json_payload = response.json()
+            Latlong = list((resp_json_payload['results'][0]['geometry']['location']).values())
+        except IndexError:
+            Latlong = "No Latitude | Longitude Found"
+
+    return Latlong
+
+
+# =============Getting Urls From A text File ========#
+
+def main(request):
+    # from datetime import datetime
+    File_Url = 'urls.txt'
+    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S = ([] for i in range(19))
+    with open(File_Url) as inf:
+        urls = (line.strip() for line in inf)
+        fetch = []
+        for url in urls:
+            headers = {"Accept-Language": "en-US,en;q=0.5"}
+            page = requests.get(url, headers=headers)
+            soup = BeautifulSoup(page.text, 'lxml')
+            data = soup.findAll("div", {'class': "hidden_elem"})
+
+            # =====================Appending Data To List=============#
+            S.append(url)
+
+            head1 = heading(soup)
+            A.append(head1)
+
+            date1 = date(soup)
+
+            Url1 = ur_l(soup)
+            C.append(Url1)
+
+            Event = Event_Details(data)
+            D.append(Event)
+
+            Locate = Location(data)
+            E.append(Locate)
+
+            mainData = Tick_Time_Info(data)
+            F.append(mainData[0])
+            H.append(mainData[2])
+            da = Timming(data)
+            time = da[0]
+            if (len(time) < 6):
+                starttime = time
+                J.append(starttime)
+                endtime = str(da[1]).strip("UTC+05:30")
+                K.append(endtime)
+            elif (len(time) < 17):
+                starttime = time.strip("UTC+05:30")
+                J.append(starttime)
+                endtime = str(da[1]).strip("UTC+05:30")
+                K.append(endtime)
+            else:
+                time = time.strip("UTC+05:30")
+                starttime, endtime = time.split('to')
+                starttime = starttime[-6:]
+                endtime = endtime[-6:]
+                J.append(starttime)
+                K.append(endtime)
+
+            # ============================year============================
+            y = year(data)
+            yea = str(y[0])
+            a, b = yea.split('content="')
+            yr = str(b[:4])
+            # =================================getting year=======================================#
+
+
+            dat = Date(data)
+            stdate = str(dat[0] + " " + yr)
+            G.append(stdate)
+            endate = str(dat[0] + " " + yr)
+            print(endate)
+            B.append(endate)
+
+            # ========================str time || end time to seconds===================#
+
+            stdatetime = (str(stdate) + " " + str(starttime)).rstrip(' \t\r\n\0')
+            startsec = startseconds(stdatetime)
+            P.append(startsec)
+
+            endatetime = (str(endate) + " " + str(endtime)).rstrip(' \t\r\n\0')
+            print("strdatetime" + endatetime)
+            endsec = endseconds(endatetime)
+            Q.append(endsec)
+            # ==============================append email and contact number=======================#
+            R.append("sahil@picktick.in")
+            L.append("9920401161")
+            M.append("others")
+            O.append(" ")
+            N.append(" ")
+            # =================================================append Latitude and Longitude=================================#
+            moreinfo = mainData[0]
+            Latlong = Lat_long(Locate, moreinfo)
+            a1 = str(Latlong).strip("[]")
+            a1 = a1.replace(',', 'X')
+            I.append(a1)
+            # ================================================ print uploaded events heading on httpresponse===================#
+            fetch.append(head1)
+            fetch.append('<br/>')
+
+        # ======================Converting Data To Data Frames Using Pandas==================#
+        my_dictionary = OrderedDict()
+        my_dictionary['URL'] = S
+        my_dictionary['Title'] = A
+        my_dictionary['StartDate'] = B
+        my_dictionary['EndDate'] = G
+        my_dictionary['StartTime'] = J
+        my_dictionary['EndTime'] = K
+        my_dictionary['Start_Seconds'] = P
+        my_dictionary['End_Seconds'] = Q
+        my_dictionary['Location'] = E
+        my_dictionary['Latitude_Longitude'] = I
+        my_dictionary['More_info'] = F
+        my_dictionary['Image_Url'] = C
+        my_dictionary['Tickets'] = H
+        my_dictionary['Email'] = R
+        my_dictionary['Mobile_Number'] = L
+        my_dictionary['Categories'] = M
+        my_dictionary['Ticket_Types'] = N
+        my_dictionary['KeyWords'] = O
+        my_dictionary['Event_Details'] = D
+
+        df = pd.DataFrame(my_dictionary)
+        # ============ Spreadsheet Id & Sheet Name ==================#
+
+        spreadsheet = '1Wne9gj7CIgEtNJgcvuEgL1EMxqQRZ9UEfSJMp0hqKic'
+        wks_name = 'Sheet1'
+
+        # =============upload data to spreadsheet===================#
+        d2g.upload(df, spreadsheet, wks_name)
+        return HttpResponse(fetch)
+
+
+def excel_spreadsheet(request):
+    spreadsheet = '1Wne9gj7CIgEtNJgcvuEgL1EMxqQRZ9UEfSJMp0hqKic'
+    wks_name = 'Sheet1'
+    df = g2d.download(spreadsheet, wks_name, col_names=True, row_names=True)
+    dd = df.to_html()
+
+    # ========================== None and Empty Cells Checking In Dataframe==============================#
+    event = str((~df.Event_Details.str.contains(r' ')).sum())
+    Image_Url = str((df.Image_Url.str.contains(r' ')).sum())
+    Location = str(((~df.Location.str.contains(r' ')).sum()) - 1)
+    More_info = str((~df.More_info.str.contains(r' ')).sum())
+    StartDate = str((~df.StartDate.str.contains(r' ')).sum())
+    Tickets = str((df.Tickets.str.contains(r'nan')).sum())
+    EndTime = str((df.EndTime.str.contains(r' ')).sum())
+    Title = str((~df.Title.str.contains(r' ')).sum())
+    EndDate = str((~df.EndDate.str.contains(r' ')).sum())
+    StartTime = str((df.StartTime.str.contains(r' ')).sum())
+    Start_Seconds = str((df.Start_Seconds.str.contains(r' ')).sum())
+    End_Seconds = str((df.End_Seconds.str.contains(r'nan')).sum())
+    Latitude_Longitude = str((~df.Latitude_Longitude.str.contains(r' ')).sum())
+    Email = str((df.Email.str.contains(r' ')).sum())
+    Mobile_Number = str((df.Mobile_Number.str.contains(r' ')).sum())
+    Categories = str((df.Categories.str.contains(r' ')).sum())
+    Ticket_Types = str((df.Ticket_Types.str.contains(r' ')).sum())
+    KeyWords = str((df.KeyWords.str.contains(r' ')).sum())
+
+    print(df.astype(bool).sum(axis=0).tolist())
+    print(df.isnull().sum(axis=1))
+    print(len(df))
+    cg = "No. Of Blank Cells:" "</br> " + "Title: " + "<b>" + Title + "</b>" + "StartDate: " + StartDate + "EndDate: " + EndDate + "StartTime: " + StartTime + "EndTime: " + EndTime + "Start_Seconds: " + Start_Seconds + "End_Seconds: " + End_Seconds + "Location: " + Location + "Latitude_Longitude: " + Latitude_Longitude + "More_info: " + More_info + "Image_Url: " + Image_Url + "Tickets: " + Tickets + "Email: " + Email + "Mobile_Number: " + Mobile_Number + "Categories: " + Categories + "\nTicket_Types: \n" + Ticket_Types + "KeyWords: " + KeyWords + "Event_Details: " + event
+    de = cg + '<br/>' + dd
+    return render(request, 'layout1.html', {'df': de})
